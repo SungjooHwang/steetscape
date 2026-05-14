@@ -3,13 +3,13 @@
 # Modified by Jitesh Jain (https://github.com/praeclarumjj3)
 # ------------------------------------------------------------------------------
 
-## 경량화 버전: --mode {1, 2} 에 따라 다르게 수정
-# mode 1: 기존 전체 수행 (현재 동작 그대로)
+## Lightweight Version: Modified according to --mode {1, 2}
+# mode 1: Full execution (original behavior)
 # mode 2:
-#        A. Segment는 4개의 모델을 모두 추출 대신 최적 모델로 추출: 
-#           (1)Green-ADE20K (2)Openness & Complexity-Mapillary Vistas, (3)Facility-수행안함, (4)Sidewalk-ADE20K
-#        B. Cityscape는 추론하지 않음 (inference_all.py 파일에 코드 삽입)
-#        C. YOLO 추론용 224x224 세그먼트 이미지는 저장 생략, 원본사이즈(_로 시작하는 파일)는 계속 저장
+#        A. Segments are extracted using optimal models instead of all 4 models: 
+#           (1) Green: ADE20K, (2) Openness & Complexity: Mapillary Vistas, (3) Facility: Skipped, (4) Sidewalk: ADE20K
+#        B. Cityscapes inference is skipped (code logic inserted in inference_all.py)
+#        C. 224x224 segment images for YOLO inference are not saved; original size files (starting with '_') are still saved.
 
 import argparse
 import multiprocessing as mp
@@ -26,11 +26,11 @@ import time
 import cv2
 import numpy as np
 import tqdm
-from glob import glob ## 추가 세그먼트 합치기용
-from scipy.spatial import KDTree ##Green Segment의 분포 색체분포 등 구하기 용
+from glob import glob  # For merging additional segments
+from scipy.spatial import KDTree  # For calculating color distribution/spread of Green segments
 from scipy.stats import entropy
-import re  # 추가 세그먼트 이름 기준 함칠 때 필요
-import shutil   # 파일 복사 기능
+import re  # Required for merging based on segment name patterns
+import shutil  # File copy functionality
 
 from detectron2.config import get_cfg
 from detectron2.data.detection_utils import read_image
@@ -46,7 +46,6 @@ from oneformer import (
 )
 
 from predictor import VisualizationDemo
-
 from ultralytics import YOLO
 
 def setup_cfg(args):
@@ -105,15 +104,15 @@ def get_parser():
     )
     return parser
 
-#세그멘트 합친 후 관련 세그먼트들 정보 추출
+# Extract segment information after merging
 def process_segment(png_dir, path, keywords, segment_name):
     """
-    png_dir : PNG 파일들이 들어있는 폴더
-    path : 원본 이미지 파일 경로 (basename과 model_name 추출용)
-    keywords : 세그먼트 키워드 리스트 (ex: ['_tree', '_grass', ...])
-    segment_name : 최종 segment 이름 (ex: 'green', 'sidewalk')
+    png_dir : Directory containing PNG files
+    path : Original image path (used to extract basename and model_name)
+    keywords : List of segment keywords (ex: ['_tree', '_grass', ...])
+    segment_name : Final segment name (ex: 'green', 'sidewalk')
     """
-    # 파일 찾기
+    # Find matching files
     matching_files = []
     all_png_files = glob(os.path.join(png_dir, "*.png"))
 
@@ -127,8 +126,8 @@ def process_segment(png_dir, path, keywords, segment_name):
                 matching_files.append(file)
 
     if not matching_files:
-        print(f"[!] 병합할 {segment_name} 계열 PNG가 없습니다.")
-            # === 여기서 CSV라도 생성 ===
+        print(f"[!] No PNG files found for the {segment_name} category to merge.")
+        # === Generate empty CSV even if no segments found ===
         input_basename = os.path.splitext(os.path.basename(path))[0]
         model_name = os.path.basename(os.path.dirname(png_dir))
         output_dir = os.path.join(os.path.dirname(os.path.dirname(png_dir)), f"seg_{segment_name}")
@@ -137,7 +136,7 @@ def process_segment(png_dir, path, keywords, segment_name):
         output_filename = f"{input_basename}_{model_name}_{segment_name}.png"
         csv_path = os.path.join(output_dir, output_filename.replace(".png", ".csv"))
 
-        # CSV에 0 또는 의미 있는 기본값으로 채움
+        # Fill CSV with zeros or default values
         with open(csv_path, 'w', encoding='utf-8', newline='') as f:
             writer = csv.writer(f, delimiter='|')
             writer.writerow(['filename', f'{segment_name}_pixels', 'total_pixels', 'ratio',
@@ -148,10 +147,10 @@ def process_segment(png_dir, path, keywords, segment_name):
                             0.0, 0.0, 0.0, 0.0,
                             0.0, 0.0,
                             0.0, 0.0])
-        print(f"[✓] 세그먼트 없음 → 빈 CSV 생성 완료: {csv_path}")
+        print(f"[✓] No segment found -> Empty CSV created: {csv_path}")
         return
 
-    # 이미지 병합
+    # Image Merging
     merged_image = None
     for file in matching_files:
         img = cv2.imread(file, cv2.IMREAD_UNCHANGED)
@@ -163,12 +162,12 @@ def process_segment(png_dir, path, keywords, segment_name):
             merged_image = np.zeros_like(img)
         merged_image[mask] = img[mask]
 
-    # 병합 이미지 저장
+    # Save Merged Image
     segment_path = os.path.join(png_dir, f"{segment_name}_segment.png")
     cv2.imwrite(segment_path, merged_image)
-    print(f"[✓] Saved {segment_name} segment mask → {segment_path}")
+    print(f"[✓] Saved {segment_name} segment mask -> {segment_path}")
 
-    # output 폴더 및 파일명
+    # Output directory and filename
     input_basename = os.path.splitext(os.path.basename(path))[0]
     model_name = os.path.basename(os.path.dirname(png_dir))
     output_dir = os.path.join(os.path.dirname(os.path.dirname(png_dir)), f"seg_{segment_name}")
@@ -177,12 +176,12 @@ def process_segment(png_dir, path, keywords, segment_name):
     output_filename = f"{input_basename}_{model_name}_{segment_name}.png"
     output_path = os.path.join(output_dir, output_filename)
     shutil.copyfile(segment_path, output_path)
-    print(f"[✓] Copied {segment_name} segment to → {output_path}")
+    print(f"[✓] Copied {segment_name} segment to -> {output_path}")
 
-    # CSV 통계
+    # CSV Statistics
     img = cv2.imread(output_path, cv2.IMREAD_UNCHANGED)
     if img is None or img.shape[2] < 4:
-        print(f"[!] 오류: 알파 채널 없는 이미지거나 열기 실패 → {output_path}")
+        print(f"[!] Error: Image missing alpha channel or failed to open -> {output_path}")
         return
 
     alpha_channel = img[:, :, 3]
@@ -213,11 +212,11 @@ def process_segment(png_dir, path, keywords, segment_name):
     spread_ratio = 0.0
     if len(xs) > 1:
         coords = np.vstack((xs, ys)).T
-        # 바운딩 박스 면적
+        # Bounding box area
         min_x, max_x = xs.min(), xs.max()
         min_y, max_y = ys.min(), ys.max()
         bbox_area = (max_x - min_x + 1) * (max_y - min_y + 1)
-        # 유효 픽셀 수
+        # Valid pixel count
         pixel_area = len(xs)
         spread_ratio = pixel_area / bbox_area if bbox_area > 0 else 0.0
 
@@ -237,7 +236,7 @@ def process_segment(png_dir, path, keywords, segment_name):
                          f"{hue_entropy:.3f}", f"{sat_entropy:.3f}",
                          f"{spatial_entropy:.3f}", f"{edge_density:.4f}"])
 
-    print(f"[✓] Saved {segment_name} stats CSV → {csv_path}")
+    print(f"[✓] Saved {segment_name} stats CSV -> {csv_path}")
 
 if __name__ == "__main__":
     seed = 0
@@ -286,16 +285,6 @@ if __name__ == "__main__":
             start_time = time.time()
             predictions, visualized_output = demo.run_on_image(img_array, args.task)
             print("----------------------------------------------") 
-            # print(predictions, visualized_output)
-            # logger.info(
-            #     "{}: {} in {:.2f}s".format(
-            #         path,
-            #         "detected {} instances".format(len(predictions["instances"]))
-            #         if "instances" in predictions
-            #         else "finished",
-            #         time.time() - start_time,
-            #     )
-            # )
 
             if args.output:
                 if len(args.input) == 1:
@@ -329,7 +318,7 @@ if __name__ == "__main__":
                                 result = cv2.bitwise_and(img, img, mask=binary_mask)
                                 
                                 result[np.where(binary_mask == 0)] = [0, 0, 0]
-                                result_raw = cv2.cvtColor(result.copy(), cv2.COLOR_BGR2RGBA) ##0408 추가 0528 수정정
+                                result_raw = cv2.cvtColor(result.copy(), cv2.COLOR_BGR2RGBA) ## Added 0408, Modified 0528
 
                                 x, y, w, h = cv2.boundingRect(binary_mask) ## image crop based on bounding box
                                 result = result[y:y+h, x:x+w]
@@ -337,12 +326,12 @@ if __name__ == "__main__":
                                 result = cv2.cvtColor(result, cv2.COLOR_BGR2BGRA) ## Revised By Dudaji BGR -> BGRA
                                 
                                 alpha_channel = np.where(binary_mask[y:y+h, x:x+w] > 0, 255, 0).astype(np.uint8)
-                                result[:, :, 3] = alpha_channel  ##ADDED by Dudaji Creating Transparent Background
+                                result[:, :, 3] = alpha_channel  ## ADDED by Dudaji Creating Transparent Background
                                 
-                                alpha_channel_raw = np.where(binary_mask > 0, 255, 0).astype(np.uint8) ##0408 추가
-                                result_raw[:, :, 3] = alpha_channel_raw ##0408 추가
+                                alpha_channel_raw = np.where(binary_mask > 0, 255, 0).astype(np.uint8) ## Added 0408
+                                result_raw[:, :, 3] = alpha_channel_raw ## Added 0408
 
-                                ### 이거는 기존 코드 by Dudaji 224 X 224로 png 출력
+                                ### Existing code by Dudaji: Output PNG as 224x224
                                 result = cv2.resize(result, (224, 224))
                                 material = material_model.predict(result[:, :, :3])[0]
                                 material_name = material.names[material.probs.top1]
@@ -352,52 +341,47 @@ if __name__ == "__main__":
                                 png_filename = f"{demo.metadata.stuff_classes[category_id]}_{material_name}.png" ## Added by Dudaji PNG saving
                                 png_filepath = os.path.join(png_dir, png_filename) ## Added by Dudaji PNG saving
 
-                                #### 이거는 기존 코드 by Dudaji아래 저장되는 result는 224x224로 함
+                                #### Existing code by Dudaji: save result as 224x224
                                 if save_yolo_segment:
                                     cv2.imwrite(png_filepath, result)
 
-                                #  저장은 원래 처음 input 사이즈로 다시 확대 result 그대로!  ### 250402 수정 
-                                #result_resized = cv2.resize(result, (img.shape[1], img.shape[0]))
-                                #cv2.imwrite(png_filepath, result_resized)
-
-                                # 5. result_raw 저장 (크롭 없이 전체)
+                                # 5. Save result_raw (Full size, no crop)
                                 raw_filename = f"_{demo.metadata.stuff_classes[category_id]}.png"
                                 raw_filepath = os.path.join(png_dir, raw_filename)
                                 cv2.imwrite(raw_filepath, result_raw)
 
-                            # (1) Green 처리
+                            # (1) Green Processing
                             green_keywords = ['_tree', '_grass', '_mountain','_vegetation','_terrain','_field','_plant']
                             if args.mode == 1 or (args.mode == 2 and 'ade20k' in png_dir.lower()):
                                 process_segment(png_dir, path, green_keywords, "green")
 
-                            # (2) Sidewalk 처리
+                            # (2) Sidewalk Processing
                             sidewalk_keywords = ['_sidewalk', '_earth', '_pavement','_pedestrian','_bike','_dirt',]
                             if args.mode == 1 or (args.mode == 2 and 'ade20k' in png_dir.lower()):
                                 process_segment(png_dir, path, sidewalk_keywords, "sidewalk")
 
-                            ## (3) Openness 처리 (하늘 + 도로)
+                            ## (3) Openness Processing (Sky + Road)
                             openness_keywords = ['_sky','_road','_sidewalk', '_earth', '_pavement','_pedestrian','_bike','_dirt','_lane','_curb']
                             if args.mode == 1 or (args.mode == 2 and 'mapillary' in png_dir.lower()):
                                 process_segment(png_dir, path, openness_keywords, "openness")
 
-                            ## (4) sky 처리 (하늘)
+                            ## (4) Sky Processing
                             #sky_keywords = ['_sky']
                             #process_segment(png_dir, path, sky_keywords, "sky")
 
-                            ## (5) facilities 처리 (시설물)
+                            ## (5) Facilities Processing
                             #facilities_keywords = ['_billboard','_building','_signboard','_traffic','_pole','_house','_street','_traffic','_wall','_booth','_box','_awning','_pot','_fence','_column','_bridge','_stairs','_curtain','_cardboard','_bench','_banner','_utility','_junction']
                             #process_segment(png_dir, path, facilities_keywords, "facility")
 
-                            ## (6) complexity = openness 반전 + 원본이미지 색 유지
-
+                            ## (6) Complexity = Inverted Openness + Maintain Original Colors
                             if args.mode == 1 or (args.mode == 2 and 'mapillary' in png_dir.lower()):
                                 openness_path = os.path.join(png_dir, "openness_segment.png")
                                 complexity_path = os.path.join(png_dir, "complexity_segment.png")
 
-                                # 1. openness 이미지 열기
+                                # 1. Open openness image
                                 openness_img = cv2.imread(openness_path, cv2.IMREAD_UNCHANGED)
                                 if openness_img is None or openness_img.shape[2] < 4:
-                                    print("[!] openness_segment.png 파일 열기 실패 또는 알파 채널 없음.")
+                                    print("[!] Failed to open openness_segment.png or alpha channel missing.")
                                     input_basename = os.path.splitext(os.path.basename(path))[0]
                                     model_name = os.path.basename(os.path.dirname(png_dir))
                                     output_dir = os.path.join(os.path.dirname(os.path.dirname(png_dir)), "seg_complexity")
@@ -416,32 +400,32 @@ if __name__ == "__main__":
                                                         0.0, 0.0, 0.0, 0.0,
                                                         0.0, 0.0,
                                                         0.0, 0.0])
-                                    print(f"[✓] complexity 없음 → 빈 CSV 생성 완료: {csv_path}")                              
+                                    print(f"[✓] Complexity not found -> Empty CSV created: {csv_path}")                      
                                 else:
                                     alpha = openness_img[:, :, 3]
 
-                                    # 2. 반전 마스크 (openness가 255인 곳은 complexity에서는 0)
+                                    # 2. Inversion mask (complexity is 255 where openness is 0)
                                     inverted_alpha = (alpha == 0).astype(np.uint8) * 255
 
-                                    # 3. 원본 이미지 불러오기 (RGB 사용)
+                                    # 3. Load original image (RGB)
                                     original_img = cv2.imread(path, cv2.IMREAD_COLOR)
                                     if original_img is None:
-                                        print(f"[!] 원본 이미지 열기 실패: {path}")
+                                        print(f"[!] Failed to open original image: {path}")
                                     else:
-                                        # 4. 크기 일치 여부 확인
+                                        # 4. Check size consistency
                                         if original_img.shape[:2] != inverted_alpha.shape:
-                                            print("[!] 원본과 openness 크기 불일치 → 원본 resize 진행")
+                                            print("[!] Size mismatch between original and openness -> Resizing original image")
                                             original_img = cv2.resize(original_img, (inverted_alpha.shape[1], inverted_alpha.shape[0]))
 
-                                        # 5. complexity 이미지 생성: 원본 RGB + inverted_alpha
+                                        # 5. Create complexity image: Original BGR + inverted_alpha
                                         complexity_img = cv2.cvtColor(original_img, cv2.COLOR_BGR2BGRA)
                                         complexity_img[:, :, 3] = inverted_alpha
 
-                                        # 6. 파일 저장
+                                        # 6. Save file
                                         cv2.imwrite(complexity_path, complexity_img)
-                                        print(f"[✓] complexity_segment.png 생성 완료 → {complexity_path}")
+                                        print(f"[✓] complexity_segment.png generated -> {complexity_path}")
 
-                                        # 7. 복사 및 CSV 처리
+                                        # 7. Copy and handle CSV
                                         input_basename = os.path.splitext(os.path.basename(path))[0]
                                         model_name = os.path.basename(os.path.dirname(png_dir))
                                         output_dir = os.path.join(os.path.dirname(os.path.dirname(png_dir)), "seg_complexity")
@@ -450,9 +434,9 @@ if __name__ == "__main__":
                                         output_filename = f"{input_basename}_{model_name}_complexity.png"
                                         output_path = os.path.join(output_dir, output_filename)
                                         shutil.copyfile(complexity_path, output_path)
-                                        print(f"[✓] Copied complexity segment to → {output_path}")
+                                        print(f"[✓] Copied complexity segment to -> {output_path}")
 
-                                        ### CSV 통계 생성 (기존 process_segment와 동일)
+                                        ### Generate CSV stats (same as process_segment)
                                         img = cv2.imread(output_path, cv2.IMREAD_UNCHANGED)
                                         alpha_channel = img[:, :, 3]
                                         complexity_pixels = int(np.sum(alpha_channel == 255))
@@ -483,11 +467,9 @@ if __name__ == "__main__":
                                         spread_ratio = 0.0
                                         if len(xs) > 1:
                                             coords = np.vstack((xs, ys)).T
-                                            # 바운딩 박스 면적
                                             min_x, max_x = xs.min(), xs.max()
                                             min_y, max_y = ys.min(), ys.max()
                                             bbox_area = (max_x - min_x + 1) * (max_y - min_y + 1)
-                                            # 유효 픽셀 수
                                             pixel_area = len(xs)
                                             spread_ratio = pixel_area / bbox_area if bbox_area > 0 else 0.0
 
@@ -507,9 +489,10 @@ if __name__ == "__main__":
                                                             f"{hue_entropy:.3f}", f"{sat_entropy:.3f}",
                                                             f"{spatial_entropy:.3f}", f"{edge_density:.4f}"])
 
-                                        print(f"[✓] Saved complexity stats CSV → {csv_path}")
-                         
-                            ## (7) seg_all 처리 → 원본 이미지 전체 분석: 4모델 결과 동일하니 ade20k에서만 한번수행
+                                        print(f"[✓] Saved complexity stats CSV -> {csv_path}")
+                          
+                            ## (7) seg_all Processing -> Analyze full original image: 
+                            # Results across 4 models are identical, so perform only once for ade20k
                             if 'ade20k' in png_dir.lower():
                                 input_basename = os.path.splitext(os.path.basename(path))[0]
                                 model_name = os.path.basename(os.path.dirname(png_dir))
@@ -520,11 +503,11 @@ if __name__ == "__main__":
                                 output_path = os.path.join(output_dir, output_filename)
 
                                 shutil.copyfile(path, output_path)
-                                print(f"[✓] Copied original image to → {output_path}")
+                                print(f"[✓] Copied original image to -> {output_path}")
 
                                 img = cv2.imread(output_path, cv2.IMREAD_COLOR)
                                 if img is None:
-                                    print(f"[!] 원본 이미지 열기 실패: {output_path}")
+                                    print(f"[!] Failed to open original image: {output_path}")
                                 else:
                                     total_pixels = img.shape[0] * img.shape[1]
                                     segment_pixels = total_pixels
@@ -566,13 +549,10 @@ if __name__ == "__main__":
                                                         f"{hue_entropy:.3f}", f"{sat_entropy:.3f}",
                                                         f"{spatial_entropy:.3f}", f"{edge_density:.4f}"])
 
-                                    print(f"[✓] Saved seg_all stats CSV → {csv_path}")
+                                    print(f"[✓] Saved seg_all stats CSV -> {csv_path}")
 
-
-
-                            ## 여기서 부터 다시 전체 파일 처리
+                            ## Resume full file processing from here
                             stuffs = []
-
                             rows = []
 
                             for id in range(len(segments_info)):
@@ -580,14 +560,8 @@ if __name__ == "__main__":
                                 class_name = demo.metadata.stuff_classes[category_id]
                                 stuffs.append(class_name)
 
-                            #for i, stuff in enumerate(stuffs):
-                            #    try:
-                            #        rows.append([stuff, materials[i]])
-                            #    except:
-                            #        rows.append([stuff, 'None'])
-
                             #### # New Code for Pixel Area and Pixel %  #####
-                            total_pixels = panoptic_seg.size  # 전체 이미지 픽셀 수
+                            total_pixels = panoptic_seg.size  # Total image pixel count
 
                             for i, stuff in enumerate(stuffs):
                                 try:
@@ -597,17 +571,17 @@ if __name__ == "__main__":
 
                                 try:
                                     segment_id = segments_info[i]['id']
-                                    # panoptic_seg에서 해당 segment ID의 마스크 생성
+                                    # Create mask for current segment ID in panoptic_seg
                                     binary_mask = (panoptic_seg == segment_id)
-                                    area = int(binary_mask.sum())  # 해당 세그먼트의 픽셀 수
+                                    area = int(binary_mask.sum())  # Pixel count of current segment
                                 except:
                                     area = 0
 
                                 ratio = (area / total_pixels * 100) if total_pixels > 0 else 0.0
 
-                                # 형식: stuff|material|면적(px)|비율(%)
+                                # Format: stuff|material|area(px)|ratio(%)
                                 rows.append([f"{stuff}|{material_name}|{area}|{ratio:.1f}%"])
-                            ### 여기 까지 Pixel 너비와 면적 추출하는 코드 수정내용
+                            ### End of modified code for extracting pixel width and area
 
                             with open(out_filename.replace('jpg', 'csv'), 'w', encoding='utf-8') as f:
                                 writer = csv.writer(f, delimiter='|')
@@ -624,5 +598,4 @@ if __name__ == "__main__":
                 raise ValueError("Please specify an output path!")
     else:
         raise ValueError("No Input Given")
-
 
