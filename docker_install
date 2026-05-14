@@ -1,0 +1,71 @@
+
+## docker 설치 - devcontainer 사용시 필요
+sudo apt-get update
+sudo apt-get upgrade
+sudo apt-get install -y \
+    ca-certificates \
+    curl \
+    gnupg \
+    lsb-release
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+docker --version
+
+sudo usermod -aG docker $USER
+newgrp docker
+
+## devcontainer 실행
+- vscode에서 왼쪽아래 클릭후 Reopen in Container 클릭
+- devcontainer 실행후 자동설치되는 것들 기다리기
+- 설치후 `python src/inference/inference_all.py --input data/input/AI_hub/* --output data/output/AI_hub` 실행
+
+
+
+# 잘 안되서 devcontainer.json 파일 수정 (devcontainer에서 gpu 접근)
+
+{
+	"name": "PyTorch DevContainer",
+	"build": {
+	  "dockerfile": "Dockerfile"
+	},
+	"runArgs": [
+		"--gpus",
+		"all"
+	],
+	"customizations": {
+	  "vscode": {
+		"settings": {
+		  "python.pythonPath": "/opt/conda/bin/python",
+		  "terminal.integrated.defaultProfile.linux": "bash"
+		}
+	  },
+		"extensions": [
+		  "ms-python.python",
+		  "ms-toolsai.jupyter",
+		  "ms-vscode-remote.remote-containers"
+		]
+	},
+	"postCreateCommand": "pip install pip==21.0 && pip install natten==0.14.4 -f https://shi-labs.com/natten/wheels/cu113/torch1.10.1/index.html && pip install detectron2==0.6 -f https://dl.fbaipublicfiles.com/detectron2/wheels/cu113/torch1.10/index.html && pip install -r requirements.txt && cd src/OneFormer/oneformer/modeling/pixel_decoder/ops && sudo /opt/conda/bin/python setup.py build install && cd /workspaces/ewha",
+	"forwardPorts": [8888, 6006],
+	"remoteUser": "vscode"
+  }
+
+  # 그다음에 다음 명령어 수행하였음
+# NVIDIA Container Toolkit 설치
+편집
+# 1. 패키지 업데이트
+sudo apt update && sudo apt install -y nvidia-container-toolkit
+
+# 2. Docker에 연동
+sudo nvidia-ctk runtime configure --runtime=docker
+
+# 3. Docker 재시작
+sudo systemctl restart docker
+
+#그 다음 다시 테스트:
+docker run --rm --gpus all nvidia/cuda:12.6-base nvidia-smi
